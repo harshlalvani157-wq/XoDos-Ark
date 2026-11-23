@@ -17,6 +17,7 @@ jobs:
 
     env:
       ANDROID_API: 34
+      NATIVE_API: 24
       NDK_VERSION: 27.1.12297006
       ANDROID_SDK_ROOT: /usr/local/lib/android/sdk
 
@@ -73,9 +74,9 @@ jobs:
           NDK_BIN="$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/$NDK_HOST/bin"
 
           export AR="$NDK_BIN/llvm-ar"
-          export CC="$NDK_BIN/aarch64-linux-android${ANDROID_API}-clang"
-          export CXX="$NDK_BIN/aarch64-linux-android${ANDROID_API}-clang++"
-          export CARGO_TARGET_AARCH64_LINUX_ANDROID_LINKER="$NDK_BIN/aarch64-linux-android${ANDROID_API}-clang"
+          export CC="$NDK_BIN/aarch64-linux-android${NATIVE_API}-clang"
+          export CXX="$NDK_BIN/aarch64-linux-android${NATIVE_API}-clang++"
+          export CARGO_TARGET_AARCH64_LINUX_ANDROID_LINKER="$NDK_BIN/aarch64-linux-android${NATIVE_API}-clang"
           export CARGO_TARGET_DIR="$PWD/target"
 
           cargo build --release --target aarch64-linux-android

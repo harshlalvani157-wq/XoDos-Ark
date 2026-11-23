@@ -389,6 +389,17 @@ fn run_until_exit(
         Command::new(&exe)
     };
 
+    // Select audio sink: Android 7 (Nougat / API 24-25) does not have AAudio (libaaudio.so).
+    // On API 24-25 or devices without AAudio, fall back to OpenSL ES (module-sles-sink).
+    let sink_mod = if !Path::new("/system/lib64/libaaudio.so").exists()
+        && !Path::new("/system/lib/libaaudio.so").exists()
+    {
+        log::info!("PulseAudio: AAudio not found, using OpenSL ES sink (Android 7 compatibility)");
+        "module-sles-sink"
+    } else {
+        "module-aaudio-sink"
+    };
+
     cmd.arg("-n")
         .arg("--use-pid-file=no")
         .arg("--disable-shm=yes")
@@ -397,7 +408,7 @@ fn run_until_exit(
         .arg("--log-target=stderr")
         .arg("--log-level=debug")
         .arg("-L")
-        .arg("module-aaudio-sink sink_name=xodosark-out")
+        .arg(format!("{} sink_name=xodosark-out", sink_mod))
         .arg("-L")
         .arg("module-null-sink sink_name=xodosark-mix")
         .arg("-L")
@@ -410,8 +421,8 @@ fn run_until_exit(
             "module-native-protocol-tcp listen=127.0.0.1 port={} auth-anonymous=1",
             port
         ))
-            .arg("-L")
-    .arg("module-aaudio-sink sink_name=xodos2-out");
+        .arg("-L")
+        .arg(format!("{} sink_name=xodos2-out", sink_mod));
 
 // ── NEW: conditionally load the mic source ──
 // The flag is written/deleted by MicManager on the Kotlin side.

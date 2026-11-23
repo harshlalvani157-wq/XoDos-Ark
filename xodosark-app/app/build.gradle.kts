@@ -21,6 +21,7 @@ android {
     compileSdk = 34
 //buildToolsVersion = "34.0.0"  
     compileOptions {
+        isCoreLibraryDesugaringEnabled = true
         sourceCompatibility = JavaVersion.VERSION_11
         targetCompatibility = JavaVersion.VERSION_11
     }
@@ -29,15 +30,15 @@ kotlinOptions {
     }
         defaultConfig {
         applicationId = "app.xodos2"
-        minSdk = 26
+        minSdk = 24
         targetSdk = 28
       
         ndkVersion = "27.1.12297006"   
         buildConfigField("String", "COMMIT", "\"xodos2-embedded-x11\"")
         // versionName: user-visible, align with git tag / Release (e.g. v0.1.0 → "0.1.0").
         // versionCode: positive integer, must increase for every new APK you ship (Play / sideload).
-        versionCode = 65
-        versionName = "0.6.5"
+        versionCode = 66
+        versionName = "1.0.0-android7"
     }
 
     signingConfigs {
@@ -182,7 +183,8 @@ afterEvaluate {
 }
 
 dependencies {
-implementation("org.jsoup:jsoup:1.17.2")
+    coreLibraryDesugaring("com.android.tools:desugar_jdk_libs:2.0.4")
+    implementation("org.jsoup:jsoup:1.17.2")
 implementation("androidx.compose.material:material-icons-extended:1.5.0") //
     implementation("androidx.appcompat:appcompat:1.7.0")
     implementation("androidx.preference:preference:1.2.1")

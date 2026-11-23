@@ -37,5 +37,10 @@ cargo build --release --target aarch64-linux-android --manifest-path Cargo.toml
 
 JNI_LIBS_DIR="../xodosark-app/app/src/main/jniLibs/arm64-v8a"
 mkdir -p "$JNI_LIBS_DIR"
-cp -f target/aarch64-linux-android/release/libxodosark.so "$JNI_LIBS_DIR/"
-echo "Built and copied to $JNI_LIBS_DIR/libxodosark.so"
+if [ -f target/aarch64-linux-android/release/libxodos2.so ]; then
+    cp -f target/aarch64-linux-android/release/libxodos2.so "$JNI_LIBS_DIR/"
+    echo "Built and copied to $JNI_LIBS_DIR/libxodos2.so"
+elif [ -f target/aarch64-linux-android/release/libxodosark.so ]; then
+    cp -f target/aarch64-linux-android/release/libxodosark.so "$JNI_LIBS_DIR/"
+    echo "Built and copied to $JNI_LIBS_DIR/libxodosark.so"
+fi
