@@ -21,6 +21,37 @@ use std::os::unix::io::{FromRawFd, RawFd};
 use std::path::{Path, PathBuf};
 
 // ==========================================================================
+// Android API level helper (for linker trampoline decision)
+// ==========================================================================
+
+/// Returns the Android SDK level. Only needs to distinguish < 29 from >= 29.
+fn android_api_level() -> i32 {
+    use std::ffi::CStr;
+    let mut buf = [0u8; 92];
+    let len = unsafe {
+        nix::libc::__system_property_get(
+            b"ro.build.version.sdk\0".as_ptr() as *const _,
+            buf.as_mut_ptr() as *mut _,
+        )
+    };
+    if len > 0 {
+        CStr::from_bytes_with_nul(&buf[..=len as usize])
+            .ok()
+            .and_then(|s| s.to_str().ok())
+            .and_then(|s| s.trim().parse::<i32>().ok())
+            .unwrap_or(29)
+    } else {
+        29
+    }
+}
+
+/// The `linker64 <exe>` trampoline is required only from Android 10 (API 29)
+/// onwards, when SELinux forbids direct `execve` from writable app data.
+fn needs_linker_trampoline() -> bool {
+    android_api_level() >= 29
+}
+
+// ==========================================================================
 // ProotOptions
 // ==========================================================================
 
@@ -464,7 +495,7 @@ fn fake_proc_bindings(sysdata_dir: &Path) -> Result<Vec<CString>> {
         if !readable {
             let fake_file = sysdata_dir.join(fake);
             if fake_file.exists() {
-                binds.push(CString::new(format!(
+                 binds.push(CString::new(format!(
                     "--bind={}:{}", fake_file.display(), real
                 ))?);
             }
@@ -504,55 +535,41 @@ pub(super) fn find_shell_in_rootfs(rootfs: &Path) -> Option<(&'static str, bool)
 
 fn build_native_args() -> Result<(Vec<CString>, Vec<CString>)> {
     let ctx = get_application_context()?;
-    let prefix_str = if Path::new("/data/data/app.xodos2/files/usr").exists() {
-        "/data/data/app.xodos2/files/usr".to_string()
-    } else {
-        ctx.data_dir.join("usr").to_string_lossy().into_owned()
-    };
-    let home_dir = if Path::new("/data/data/app.xodos2/files/home").exists() {
-        "/data/data/app.xodos2/files/home".to_string()
-    } else {
-        format!("{}/home", ctx.data_dir.display())
-    };
-    let tmp_dir = format!("{}/tmp", prefix_str);
+    let prefix_str = ctx.data_dir.join("usr").to_string_lossy().into_owned();
+    let home_dir   = format!("{}/home", ctx.data_dir.display());
+    let tmp_dir    = format!("{}/tmp", prefix_str);
     let _ = fs::create_dir_all(&tmp_dir);
     let _ = fs::create_dir_all(&home_dir);
 
-    // On Android 7+, Bionic's linker namespace enforces that the binary's path
-    // matches its embedded DT_RUNPATH (/data/data/app.xodos2/files/usr/lib).
-    // Prefer the /data/data path so library loading succeeds under namespace isolation.
-    let data_data_bash = "/data/data/app.xodos2/files/usr/bin/bash";
-    let data_data_sh   = "/data/data/app.xodos2/files/usr/bin/sh";
-    let ctx_bash       = format!("{}/bin/bash", prefix_str);
-    let ctx_sh         = format!("{}/bin/sh", prefix_str);
+    #[cfg(target_pointer_width = "64")]
+    let linker = "/system/bin/linker64";
+    #[cfg(target_pointer_width = "32")]
+    let linker = "/system/bin/linker";
 
-    let shell_path = if Path::new(data_data_bash).exists() {
-        data_data_bash.to_string()
-    } else if Path::new(&ctx_bash).exists() {
-        ctx_bash
-    } else if Path::new(data_data_sh).exists() {
-        data_data_sh.to_string()
-    } else if Path::new(&ctx_sh).exists() {
-        ctx_sh
+    let bash = format!("{}/bin/bash", prefix_str);
+    let sh   = format!("{}/bin/sh", prefix_str);
+
+    // ── FIX: only use the linker trampoline on API >= 29 ──────────────
+    let use_linker = needs_linker_trampoline();
+
+    let (shell_path, use_linker) = if Path::new(&bash).exists() {
+        (bash, use_linker)
+    } else if Path::new(&sh).exists() {
+        (sh, use_linker)
     } else {
-        "/system/bin/sh".to_string()
+        ("/system/bin/sh".to_string(), false)
     };
 
     let mut argv: Vec<CString> = Vec::new();
+    if use_linker {
+        // Invoking linker explicitly bypasses the kernel's PT_INTERP path,
+        // which is what fails on API 24/25 for Termux-prefix binaries.
+        argv.push(CString::new(linker).unwrap());
+    }
     argv.push(CString::new(shell_path.as_str()).unwrap());
-    // ── Force login and interactive shell ──
+    // ── force interactive just like the proot path does ──
     argv.push(CString::new("-l").unwrap());
     argv.push(CString::new("-i").unwrap());
-
-    let ld_library_path = format!(
-        "LD_LIBRARY_PATH={}/lib:/data/data/app.xodos2/files/usr/lib:/data/user/0/app.xodos2/files/usr/lib:{}/usr/lib:/system/lib64:/vendor/lib64",
-        prefix_str,
-        ctx.data_dir.display()
-    );
-    let path_env = format!(
-        "PATH={}/bin:/data/data/app.xodos2/files/usr/bin:/data/user/0/app.xodos2/files/usr/bin:/system/bin:/system/xbin",
-        prefix_str
-    );
 
     // ── Android system env (critical on API 24/25) ──
     let mut env: Vec<CString> = vec![
@@ -562,8 +579,10 @@ fn build_native_args() -> Result<(Vec<CString>, Vec<CString>)> {
         CString::new(format!("PREFIX={}", prefix_str)).unwrap(),
         CString::new(format!("HOME={}", home_dir)).unwrap(),
         CString::new(format!("TMPDIR={}", tmp_dir)).unwrap(),
-        CString::new(path_env).unwrap(),
-        CString::new(ld_library_path).unwrap(),
+        CString::new(format!("PATH={}/bin:/system/bin:/system/xbin", prefix_str)).unwrap(),
+        // NOTE: no LD_LIBRARY_PATH — its presence crashes linker64 on API 24/25
+        // when the prefix lib dir shadows system libs. bash's RPATH finds its
+        // own libs; system libs come from /system/lib64.
         CString::new("TERM=xterm-256color").unwrap(),
         CString::new("LANG=C.UTF-8").unwrap(),
         CString::new("DISPLAY=:0").unwrap(),

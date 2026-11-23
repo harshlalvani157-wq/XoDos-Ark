@@ -10,6 +10,43 @@ use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
 // --------------------------------------------------------------------------
+// Android API level helper (for linker trampoline decision)
+// --------------------------------------------------------------------------
+
+/// Returns the Android SDK level. Only needs to distinguish < 29 from >= 29.
+fn android_api_level() -> i32 {
+    use std::ffi::CStr;
+    let mut buf = [0u8; 92];
+    let len = unsafe {
+        nix::libc::__system_property_get(
+            b"ro.build.version.sdk\0".as_ptr() as *const _,
+            buf.as_mut_ptr() as *mut _,
+        )
+    };
+    if len > 0 {
+        CStr::from_bytes_with_nul(&buf[..=len as usize])
+            .ok()
+            .and_then(|s| s.to_str().ok())
+            .and_then(|s| s.trim().parse::<i32>().ok())
+            .unwrap_or(29)
+    } else {
+        29
+    }
+}
+
+/// The `linker64 <exe>` trampoline is required only from Android 10 (API 29)
+/// onwards, when SELinux forbids direct `execve` from writable app data.
+fn needs_linker_trampoline() -> bool {
+    android_api_level() >= 29
+}
+
+/// Decide whether to invoke a binary through `/system/bin/linker64`.
+/// Only needed on API >= 29 for files under app-private `/files/`.
+fn should_use_linker_trampoline(exe: &Path) -> bool {
+    needs_linker_trampoline() && exe.to_string_lossy().contains("/files/")
+}
+
+// --------------------------------------------------------------------------
 // application_context (container‑aware)
 // --------------------------------------------------------------------------
 
@@ -165,10 +202,8 @@ fn run_xodos_host_until_exit(
 
     use std::process::Command;
 
-    // xodos-host is a native Android/Bionic executable.
-    // When it lives under app-private /files/, invoke it through
-    // Android's native linker.
-    let mut cmd = if exec_from_app_data(&exe) {
+    // ── FIX: only use the linker trampoline on API >= 29 ──
+    let mut cmd = if should_use_linker_trampoline(&exe) {
         let mut c = Command::new(linker());
         c.arg(&exe);
         c
@@ -275,10 +310,6 @@ fn linker() -> &'static str {
     }
 }
 
-fn exec_from_app_data(exe: &Path) -> bool {
-    exe.to_string_lossy().contains("/files/")
-}
-
 pub fn host_pulse_runtime_dir(data_dir: &Path) -> PathBuf {
     data_dir.join("pulse-run")
 }
@@ -381,23 +412,13 @@ fn run_until_exit(
     };
 
     use std::process::Command;
-    let mut cmd = if exec_from_app_data(&exe) {
+    // ── FIX: only use the linker trampoline on API >= 29 ──
+    let mut cmd = if should_use_linker_trampoline(&exe) {
         let mut c = Command::new(linker());
         c.arg(&exe);
         c
     } else {
         Command::new(&exe)
-    };
-
-    // Select audio sink: Android 7 (Nougat / API 24-25) does not have AAudio (libaaudio.so).
-    // On API 24-25 or devices without AAudio, fall back to OpenSL ES (module-sles-sink).
-    let sink_mod = if !Path::new("/system/lib64/libaaudio.so").exists()
-        && !Path::new("/system/lib/libaaudio.so").exists()
-    {
-        log::info!("PulseAudio: AAudio not found, using OpenSL ES sink (Android 7 compatibility)");
-        "module-sles-sink"
-    } else {
-        "module-aaudio-sink"
     };
 
     cmd.arg("-n")
@@ -408,7 +429,7 @@ fn run_until_exit(
         .arg("--log-target=stderr")
         .arg("--log-level=debug")
         .arg("-L")
-        .arg(format!("{} sink_name=xodosark-out", sink_mod))
+        .arg("module-aaudio-sink sink_name=xodosark-out")
         .arg("-L")
         .arg("module-null-sink sink_name=xodosark-mix")
         .arg("-L")
@@ -422,26 +443,23 @@ fn run_until_exit(
             port
         ))
         .arg("-L")
-        .arg(format!("{} sink_name=xodos2-out", sink_mod));
+        .arg("module-aaudio-sink sink_name=xodos2-out");
 
-// ── NEW: conditionally load the mic source ──
-// The flag is written/deleted by MicManager on the Kotlin side.
-// Read on every loop iteration, so toggling the switch is picked up
-// on the next daemon restart (which happens automatically on app restart).
-let mic_enabled = get_application_context()
-    .ok()
-    .map(|ctx| ctx.data_dir.join("mic_enabled").exists())
-    .unwrap_or(false);
+    // ── NEW: conditionally load the mic source ──
+    // The flag is written/deleted by MicManager on the Kotlin side.
+    // Read on every loop iteration, so toggling the switch is picked up
+    // on the next daemon restart (which happens automatically on app restart).
+    let mic_enabled = get_application_context()
+        .ok()
+        .map(|ctx| ctx.data_dir.join("mic_enabled").exists())
+        .unwrap_or(false);
 
-if mic_enabled {
-    cmd.arg("-L")
-        .arg("module-sles-source rate=16000 channels=1 source_name=xodosark-mic");
-}
-// 
+    if mic_enabled {
+        cmd.arg("-L")
+            .arg("module-sles-source rate=16000 channels=1 source_name=xodosark-mic");
+    }
 
-cmd.env("PULSE_RUNTIME_PATH", &runtime_dir)
-    .env("XDG_RUNTIME_DIR", &runtime_dir)
-        .env("PULSE_RUNTIME_PATH", &runtime_dir)
+    cmd.env("PULSE_RUNTIME_PATH", &runtime_dir)
         .env("XDG_RUNTIME_DIR", &runtime_dir)
         .env("HOME", &runtime_dir)
         .env("TMPDIR", &tmpdir)
@@ -584,9 +602,10 @@ fn spawn_server(
 
     use std::process::Command;
     // CRITICAL: Trust the native OS loader if using usr/bin prefix so RPATH is honored.
+    // ── FIX: only use the linker trampoline on API >= 29 ──
     let mut cmd = if using_usr_bin {
         Command::new(&binary)
-    } else if exec_from_app_data(&binary) {
+    } else if should_use_linker_trampoline(&binary) {
         let mut c = Command::new(linker());
         c.arg(&binary);
         c
@@ -626,24 +645,24 @@ fn spawn_server(
         .env("TMPDIR", &rt_str);
 
     // CRITICAL: Unset LD_LIBRARY_PATH for usr/bin prefix to avoid symbol mixing.
-if using_usr_bin {
-    // For the Android‑specific binary, we must provide the correct libepoxy.
-    if binary_name == "virgl_test_server_android" {
-        let opt_lib = ctx.data_dir.join("usr/opt/virglrenderer-android/lib");
-        if opt_lib.exists() {
-            cmd.env("LD_LIBRARY_PATH", opt_lib);
+    if using_usr_bin {
+        // For the Android‑specific binary, we must provide the correct libepoxy.
+        if binary_name == "virgl_test_server_android" {
+            let opt_lib = ctx.data_dir.join("usr/opt/virglrenderer-android/lib");
+            if opt_lib.exists() {
+                cmd.env("LD_LIBRARY_PATH", opt_lib);
+            } else {
+                // fallback (should not happen in your setup)
+                cmd.env_remove("LD_LIBRARY_PATH");
+            }
         } else {
-            // fallback (should not happen in your setup)
             cmd.env_remove("LD_LIBRARY_PATH");
         }
+        cmd.env("PATH", ctx.data_dir.join("usr/bin").to_string_lossy().into_owned());
     } else {
-        cmd.env_remove("LD_LIBRARY_PATH");
+        let ld_path = build_ld_paths(ctx);
+        cmd.env("LD_LIBRARY_PATH", &ld_path);
     }
-    cmd.env("PATH", ctx.data_dir.join("usr/bin").to_string_lossy().into_owned());
-} else {
-    let ld_path = build_ld_paths(ctx);
-    cmd.env("LD_LIBRARY_PATH", &ld_path);
-}
 
     for &(k, v) in extra_envs {
         cmd.env(k, v);
