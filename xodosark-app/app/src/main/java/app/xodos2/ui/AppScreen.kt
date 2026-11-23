@@ -330,7 +330,10 @@ DisposableEffect(lifecycleOwner) {
     }
 
     // ----- core state -----
-    var initialized by remember { mutableStateOf(false) }
+    val hasInstalledBootstrap = remember {
+        File(context.filesDir, "usr/bin/pkg").exists()
+    }
+    var initialized by remember { mutableStateOf(hasInstalledBootstrap) }
     var installProgress by remember { mutableStateOf(0 to context.getString(R.string.appscreen_preparing)) }
     var errorMsg by remember { mutableStateOf<String?>(null) }
     var installInProgress by remember { mutableStateOf(false) }
@@ -1603,8 +1606,10 @@ for (id in 1..3) {
         },
     )
 
-    delay(200)
-    bootstrapInProgress = false
+    if (bootstrapInProgress) {
+        delay(300)
+        bootstrapInProgress = false
+    }
 
     if (!r.ok) {
         if (!pkgPath.exists()) {
@@ -2230,49 +2235,7 @@ fun setDesktopOpenGLMode(mode: String) {
         )
     }
 
-    if (!initialized || bootstrapInProgress) {
-        val pct = if (bootstrapInProgress && bootstrapProgress.first in 0..100) bootstrapProgress.first else 0
-        val msg = if (bootstrapInProgress && bootstrapProgress.second.isNotBlank()) {
-            bootstrapProgress.second
-        } else {
-            stringResource(R.string.appscreen_preparing)
-        }
-        InstallScreen(progress = pct, message = msg)
-        return
-    }
 
-if (deleteInProgress || removingNativeEnvInProgress) {
-    Surface(
-        modifier = Modifier.fillMaxSize(),
-        color = Color(0xFF07040E)
-    ) {
-        Box(
-            modifier = Modifier.fillMaxSize(),
-            contentAlignment = Alignment.Center
-        ) {
-            Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                CircularProgressIndicator(modifier = Modifier.size(48.dp), color = Color(0xFFC3B6F9))
-                Spacer(modifier = Modifier.height(16.dp))
-                Text(
-                    if (removingNativeEnvInProgress) stringResource(R.string.appscreen_removing_native_environment)
-                    else stringResource(R.string.appscreen_deleting_container),
-                    style = MaterialTheme.typography.bodyLarge,
-                    color = Color.White
-                )
-            }
-        }
-    }
-    return
-}
-
-if (backupInProgress) {
-    InstallScreen(progress = backupProgress.first, message = backupProgress.second)
-    return
-}
-    if (installInProgress) {
-        InstallScreen(progress = installProgress.first, message = installProgress.second)
-        return
-    }
 
 
 
@@ -3966,7 +3929,9 @@ if (showDistroSelection) {
                              showWineDownloadDialog ||
                              wineDownloadInProgress
 
-    AppDrawer(
+    Box(modifier = Modifier.fillMaxSize()) {
+        if (initialized && !bootstrapInProgress) {
+            AppDrawer(
         drawerState = drawerState,
         isBackgroundBlurred = isAnyDialogVisible,
         drawerContent = {
@@ -4250,6 +4215,43 @@ ShellScreen(
             },
             modifier = Modifier.fillMaxSize().graphicsLayer { clip = false }
         )
+    }
+}
+
+        if (!initialized || bootstrapInProgress) {
+            val pct = if (bootstrapInProgress && bootstrapProgress.first in 0..100) bootstrapProgress.first else 0
+            val msg = if (bootstrapInProgress && bootstrapProgress.second.isNotBlank()) {
+                bootstrapProgress.second
+            } else {
+                stringResource(R.string.appscreen_preparing)
+            }
+            InstallScreen(progress = pct, message = msg)
+        } else if (deleteInProgress || removingNativeEnvInProgress) {
+            Surface(
+                modifier = Modifier.fillMaxSize(),
+                color = Color(0xFF07040E)
+            ) {
+                Box(
+                    modifier = Modifier.fillMaxSize(),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                        CircularProgressIndicator(modifier = Modifier.size(48.dp), color = Color(0xFFC3B6F9))
+                        Spacer(modifier = Modifier.height(16.dp))
+                        Text(
+                            if (removingNativeEnvInProgress) stringResource(R.string.appscreen_removing_native_environment)
+                            else stringResource(R.string.appscreen_deleting_container),
+                            style = MaterialTheme.typography.bodyLarge,
+                            color = Color.White
+                        )
+                    }
+                }
+            }
+        } else if (backupInProgress) {
+            InstallScreen(progress = backupProgress.first, message = backupProgress.second)
+        } else if (installInProgress) {
+            InstallScreen(progress = installProgress.first, message = installProgress.second)
+        }
     }
 }
 

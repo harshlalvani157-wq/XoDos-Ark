@@ -336,7 +336,7 @@ fun ShellScreen(
     }
 
     AndroidView(
-        modifier = modifier.fillMaxSize().statusBarsPadding().imePadding(),
+        modifier = modifier.fillMaxSize(),
         factory = { ctx ->
             // Root layering (bottom → top):
             //   [0] bgImageView     — static / animated image (if set)
