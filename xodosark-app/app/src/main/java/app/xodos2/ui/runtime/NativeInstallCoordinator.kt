@@ -3,6 +3,7 @@ package app.xodos2.ui.runtime
 import android.content.Context
 import android.content.SharedPreferences
 import android.net.Uri
+import android.os.Build
 import android.os.Environment
 import android.util.Log
 import app.xodos2.NativeBridge
@@ -1466,14 +1467,17 @@ private fun symlinksNeedRefresh(context: Context): Boolean {
             }
         }
 
+        // libexec_tar.so requires Android 9+ Bionic symbols (iconv_open@LIBC_P, glob@LIBC_P).
+        // On Android 7-8 (API < 28), fall back to busybox tar which has no versioned libc symbols.
+        val tarTarget = if (Build.VERSION.SDK_INT < 28) "libexec_busybox.so" else "libexec_tar.so"
         val symlinks = mapOf(
             "libexec_busybox.so" to "busybox",
-            "libexec_tar.so"    to "tar",
-            "libproot.so"       to "proot",
-            "libxz.so"          to "xz",
-            "libpv.so"          to "pv",
-            "libgzip.so"        to "gzip",
-            "libxodosh.so"          to context.getString(R.string.appscreen_xodos_host)
+            tarTarget            to "tar",
+            "libproot.so"        to "proot",
+            "libxz.so"           to "xz",
+            "libpv.so"           to "pv",
+            "libgzip.so"         to "gzip",
+            "libxodosh.so"       to context.getString(R.string.appscreen_xodos_host)
         )
         for ((target, linkName) in symlinks) {
             val targetPath = "$nativeLibDir/$target"

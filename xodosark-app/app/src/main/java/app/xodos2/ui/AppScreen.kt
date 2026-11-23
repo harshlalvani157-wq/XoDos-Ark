@@ -2270,12 +2270,51 @@ fun setDesktopOpenGLMode(mode: String) {
     }
     
     if (bootstrapInProgress) {
-    InstallScreen(progress = bootstrapProgress.first, message = bootstrapProgress.second)
-    return
-}
+        InstallScreen(progress = bootstrapProgress.first, message = bootstrapProgress.second)
+        return
+    }
+
+    if (bootstrapError != null) {
+        AlertDialog(
+            onDismissRequest = { bootstrapError = null },
+            containerColor = Color.Transparent,
+            modifier = Modifier.glassDialogStyle(),
+            title = { Text(stringResource(R.string.appscreen_package_installation), fontWeight = FontWeight.Bold, color = Color.White) },
+            text = { Text(bootstrapError ?: "", color = Color.White.copy(alpha = 0.85f)) },
+            confirmButton = {
+                GlassButton(onClick = { bootstrapError = null }) { Text(stringResource(R.string.appscreen_ok), color = Color(0xFFC3B6F9), fontWeight = FontWeight.Bold) }
+            }
+        )
+    }
+
+    if (errorMsg != null) {
+        AlertDialog(
+            onDismissRequest = { errorMsg = null },
+            containerColor = Color.Transparent,
+            modifier = Modifier.glassDialogStyle(),
+            title = { Text(stringResource(R.string.appscreen_failed_to_init_native_layer), fontWeight = FontWeight.Bold, color = Color.White) },
+            text = { Text(errorMsg ?: "", color = Color.White.copy(alpha = 0.85f)) },
+            confirmButton = {
+                GlassButton(onClick = { errorMsg = null }) { Text(stringResource(R.string.appscreen_ok), color = Color(0xFFC3B6F9), fontWeight = FontWeight.Bold) }
+            }
+        )
+    }
 
     if (!initialized) {
-        Box(modifier = Modifier.fillMaxSize().background(Color.Black))
+        Box(
+            modifier = Modifier.fillMaxSize().background(Color(0xFF07040E)),
+            contentAlignment = Alignment.Center
+        ) {
+            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                CircularProgressIndicator(modifier = Modifier.size(48.dp), color = Color(0xFFC3B6F9))
+                Spacer(modifier = Modifier.height(16.dp))
+                Text(
+                    text = stringResource(R.string.appscreen_preparing),
+                    style = MaterialTheme.typography.bodyLarge,
+                    color = Color.White
+                )
+            }
+        }
         return
     }
 
@@ -2315,18 +2354,7 @@ if (backupInProgress) {
 
 
 
-if (bootstrapError != null) {
-    AlertDialog(
-        onDismissRequest = { bootstrapError = null },
-        containerColor = Color.Transparent,
-        modifier = Modifier.glassDialogStyle(),
-        title = { Text(stringResource(R.string.appscreen_package_installation), fontWeight = FontWeight.Bold, color = Color.White) },
-        text = { Text(bootstrapError ?: "", color = Color.White.copy(alpha = 0.85f)) },
-        confirmButton = {
-            GlassButton(onClick = { bootstrapError = null }) { Text(stringResource(R.string.appscreen_ok), color = Color(0xFFC3B6F9), fontWeight = FontWeight.Bold) }
-        }
-    )
-}
+
 
 fun downloadCustomWinComponent(url: String) {
     wineDownloadJob?.cancel()
