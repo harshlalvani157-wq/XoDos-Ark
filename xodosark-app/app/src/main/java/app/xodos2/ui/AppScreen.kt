@@ -1615,17 +1615,9 @@ for (id in 1..3) {
         return@LaunchedEffect
     }
 
-    // If bootstrap was just extracted on this launch, restart the app —
-    // exactly the same flow as after a distro install (installDone → restart).
-    if (!hadPkgBefore && pkgPath.exists()) {
-        AppLogger.log("Bootstrap just installed – restarting app")
-        installDone = true
-        return@LaunchedEffect
-    }
-
     initialized = true
-refreshContainerState()
-refreshLegacyFlags()
+    refreshContainerState()
+    refreshLegacyFlags()
 
 // ── Auto-activate native terminal ───────────────────────────────
 // If no container has been marked installed yet, but the native
@@ -2248,10 +2240,25 @@ fun setDesktopOpenGLMode(mode: String) {
             contentAlignment = Alignment.Center
         ) {
             Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                CircularProgressIndicator(modifier = Modifier.size(48.dp), color = Color(0xFFC3B6F9))
+                if (bootstrapInProgress && bootstrapProgress.first in 0..100) {
+                    CircularProgressIndicator(
+                        progress = { bootstrapProgress.first / 100f },
+                        modifier = Modifier.size(48.dp),
+                        color = Color(0xFFC3B6F9)
+                    )
+                } else {
+                    CircularProgressIndicator(
+                        modifier = Modifier.size(48.dp),
+                        color = Color(0xFFC3B6F9)
+                    )
+                }
                 Spacer(modifier = Modifier.height(16.dp))
                 Text(
-                    text = stringResource(R.string.appscreen_preparing),
+                    text = if (bootstrapInProgress && bootstrapProgress.second.isNotBlank()) {
+                        bootstrapProgress.second
+                    } else {
+                        stringResource(R.string.appscreen_preparing)
+                    },
                     style = MaterialTheme.typography.bodyLarge,
                     color = Color.White
                 )
