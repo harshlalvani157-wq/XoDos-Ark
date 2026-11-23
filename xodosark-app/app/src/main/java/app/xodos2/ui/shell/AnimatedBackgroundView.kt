@@ -3,10 +3,7 @@ package app.xodos2.ui.shell
 import android.content.Context
 import android.graphics.BitmapFactory
 import android.graphics.Canvas
-import android.graphics.ImageDecoder
 import android.graphics.Movie
-import android.graphics.drawable.Animatable
-import android.graphics.drawable.AnimatedImageDrawable
 import android.graphics.drawable.BitmapDrawable
 import android.graphics.drawable.Drawable
 import android.os.Build
@@ -17,33 +14,29 @@ import android.view.View
 import androidx.annotation.RequiresApi
 import java.io.File
 
-@RequiresApi(Build.VERSION_CODES.P)
-private object Api28ImageDecoderHelper {
-    fun decode(file: File): Drawable? {
-        val source = ImageDecoder.createSource(file)
-        val d = ImageDecoder.decodeDrawable(source)
-        if (d is AnimatedImageDrawable) {
-            d.repeatCount = AnimatedImageDrawable.REPEAT_INFINITE
-        }
-        return d
-    }
-}
-
 /**
  * Background view — static images + animated GIF / WebP / APNG.
  *
- * Priority:
- *   API 28+ → ImageDecoder (handles every animated format correctly)
- *   older   → Movie (GIF only, limited)
- *   last    → BitmapFactory (single frame)
+ * ── API 28+ (Android 9+) ──────────────────────────────────────
+ *   Every animated format via [android.graphics.ImageDecoder] and
+ *   [android.graphics.drawable.AnimatedImageDrawable].
  *
- * Rendering: **STRETCH** — the image fills the entire view exactly,
- * aspect ratio is not preserved, no cropping, no letterboxing.
+ * ── API 24–27 (Android 7.0–8.1) ───────────────────────────────
+ *   GIF  → [android.graphics.Movie] (animated)
+ *   PNG / JPG / WebP first frame → [BitmapFactory] (static)
+ *   APNG / animated WebP → shown as a static first frame only
  *
- * Cache key includes file size + last-modified so picking a different image
- * that saves to the same path (e.g. another GIF at terminal_background.gif)
- * triggers a fresh reload — this is what makes the background refresh
- * automatically right after you tap Save in the editor.
+ * **Crucially**, this class contains *zero* direct references to any
+ * API‑28 class. All API‑28 code lives in [Api28ImageHelper], whose class
+ * is only loaded on API 28+ — on older devices the classloader never
+ * tries to resolve `ImageDecoder` / `AnimatedImageDrawable`, so the app
+ * does not crash with `NoClassDefFoundError`.
+ *
+ * Rendering: **STRETCH** — the image fills the entire view exactly;
+ * aspect ratio is not preserved.
+ *
+ * Cache key = path + file size + last modified, so picking a new image
+ * that saves to the same path forces a reload.
  */
 class AnimatedBackgroundView @JvmOverloads constructor(
     context: Context,
@@ -56,8 +49,6 @@ class AnimatedBackgroundView @JvmOverloads constructor(
     private var currentKey: String? = null
 
     fun setSource(path: String?) {
-        // Cache key = path + size + mtime, so a new image saved over the
-        // same file path still forces a reload.
         val key: String? = if (path.isNullOrBlank()) {
             null
         } else {
@@ -78,31 +69,27 @@ class AnimatedBackgroundView @JvmOverloads constructor(
         }
 
         // ── API 28+: ImageDecoder handles every animated format ──
+        // The helper class is only *loaded* when this branch runs, so on
+        // API 24–27 `ImageDecoder` and `AnimatedImageDrawable` are never
+        // resolved by the classloader.
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
-            try {
-                val d = Api28ImageDecoderHelper.decode(file)
-                if (d != null) {
-                    d.callback = this
-                    drawable = d
-
-                    // Preset bounds so any draw attempt is already full-size
-                    d.setBounds(0, 0, width.coerceAtLeast(1), height.coerceAtLeast(1))
-
-                    val visible = isAttachedToWindow && isShown
-                    d.setVisible(visible, false)
-                    if (d is Animatable && visible) d.start()
-
-                    Log.i(TAG, "ImageDecoder: ${d.javaClass.simpleName} " +
-                            "intrinsic=${d.intrinsicWidth}x${d.intrinsicHeight} $path")
-                    invalidate()
-                    return
-                }
-            } catch (e: Throwable) {
-                Log.w(TAG, "ImageDecoder failed, trying Movie/Bitmap", e)
+            val d = Api28ImageHelper.decodeDrawable(file)
+            if (d != null) {
+                d.callback = this
+                d.setBounds(0, 0, width.coerceAtLeast(1), height.coerceAtLeast(1))
+                val visible = isAttachedToWindow && isShown
+                d.setVisible(visible, false)
+                Api28ImageHelper.configureAndStart(d, visible)
+                drawable = d
+                Log.i(TAG, "ImageDecoder: ${d.javaClass.simpleName} " +
+                        "intrinsic=${d.intrinsicWidth}x${d.intrinsicHeight} $path")
+                invalidate()
+                return
             }
+            Log.w(TAG, "ImageDecoder failed for $path, falling back")
         }
 
-        // ── Fallback: Movie (mostly for API < 28) ──
+        // ── API < 28 fallback: Movie for GIF (animated) ──
         try {
             val m = Movie.decodeFile(path)
             if (m != null && m.width() > 0 && m.height() > 0) {
@@ -116,7 +103,7 @@ class AnimatedBackgroundView @JvmOverloads constructor(
             Log.w(TAG, "Movie failed", e)
         }
 
-        // ── Static fallback ──
+        // ── Static fallback: BitmapFactory (first frame only) ──
         BitmapFactory.decodeFile(path)?.let { bmp ->
             val d = BitmapDrawable(resources, bmp).also {
                 it.callback = this
@@ -135,7 +122,11 @@ class AnimatedBackgroundView @JvmOverloads constructor(
     }
 
     private fun clearInternal() {
-        (drawable as? Animatable)?.stop()
+        // Route through the helper so this method has no direct reference
+        // to AnimatedImageDrawable.
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+            Api28ImageHelper.stopIfAnimated(drawable)
+        }
         drawable?.setVisible(false, false)
         drawable = null
         movie = null
@@ -157,7 +148,9 @@ class AnimatedBackgroundView @JvmOverloads constructor(
             val ih = d.intrinsicHeight
 
             if (iw > 0 && ih > 0) {
-                // Explicit STRETCH: draw at intrinsic size in a scaled canvas.
+                // STRETCH: draw at intrinsic size inside a scaled canvas.
+                // Works around OEM ROMs where AnimatedImageDrawable
+                // ignores setBounds().
                 val scaleX = width.toFloat() / iw
                 val scaleY = height.toFloat() / ih
                 canvas.save()
@@ -170,16 +163,16 @@ class AnimatedBackgroundView @JvmOverloads constructor(
                 d.draw(canvas)
             }
 
-            (d as? Animatable)?.let { anim ->
-                // Safety net: keep frames advancing
-                if (!d.isVisible) d.setVisible(true, false)
-                if (!anim.isRunning) anim.start()
-                postInvalidateOnAnimation()
+            // Keep animated drawables ticking — helper isolates the API-28 cast.
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+                if (Api28ImageHelper.ensureRunning(d)) {
+                    postInvalidateOnAnimation()
+                }
             }
             return
         }
 
-        // ── Movie path ──
+        // ── Movie path (API < 28 GIF fallback) ──
         movie?.let { m ->
             val now = SystemClock.uptimeMillis()
             val duration = if (m.duration() > 0) m.duration() else 1000
@@ -202,9 +195,8 @@ class AnimatedBackgroundView @JvmOverloads constructor(
         super.onVisibilityChanged(changedView, visibility)
         val visible = visibility == View.VISIBLE && isAttachedToWindow
         drawable?.setVisible(visible, false)
-        (drawable as? Animatable)?.let { anim ->
-            if (visible) anim.start()
-            else anim.stop()
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+            Api28ImageHelper.setAnimatedVisible(drawable, visible)
         }
         if (movie != null && visible) {
             movieStartTime = SystemClock.uptimeMillis()
@@ -216,7 +208,9 @@ class AnimatedBackgroundView @JvmOverloads constructor(
         super.onAttachedToWindow()
         drawable?.setBounds(0, 0, width.coerceAtLeast(1), height.coerceAtLeast(1))
         drawable?.setVisible(isShown, false)
-        if (isShown) (drawable as? Animatable)?.start()
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+            Api28ImageHelper.setAnimatedVisible(drawable, isShown)
+        }
         if (movie != null) {
             movieStartTime = SystemClock.uptimeMillis()
             invalidate()
@@ -226,10 +220,77 @@ class AnimatedBackgroundView @JvmOverloads constructor(
     override fun onDetachedFromWindow() {
         super.onDetachedFromWindow()
         drawable?.setVisible(false, false)
-        (drawable as? Animatable)?.stop()
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+            Api28ImageHelper.setAnimatedVisible(drawable, false)
+        }
     }
 
     private companion object {
         const val TAG = "AnimatedBg"
+    }
+}
+
+/**
+ * All API‑28+ references live here.
+ *
+ * The compiler emits references to this object from
+ * [AnimatedBackgroundView], but every call site is guarded by
+ * `Build.VERSION.SDK_INT >= Build.VERSION_CODES.P`. On API 24–27 the
+ * guarded branches are never taken → this object is never loaded → the
+ * classloader never tries to resolve [android.graphics.ImageDecoder] or
+ * [android.graphics.drawable.AnimatedImageDrawable].
+ *
+ * Do not annotate this object with anything that would cause it to be
+ * loaded eagerly at class‑init time, and do not reference it from any
+ * method that is not SDK‑guarded.
+ */
+@RequiresApi(Build.VERSION_CODES.P)
+private object Api28ImageHelper {
+
+    /** Decode via ImageDecoder — animated or static, decided by the file. */
+    fun decodeDrawable(file: File): Drawable? {
+        return try {
+            val source = android.graphics.ImageDecoder.createSource(file)
+            android.graphics.ImageDecoder.decodeDrawable(source)
+        } catch (e: Exception) {
+            Log.w("Api28ImageHelper", "decodeDrawable failed", e)
+            null
+        }
+    }
+
+    /** Make the drawable loop forever (if it is animated) and start it. */
+    fun configureAndStart(d: Drawable, visible: Boolean) {
+        if (d !is android.graphics.drawable.AnimatedImageDrawable) return
+        d.repeatCount = android.graphics.drawable.AnimatedImageDrawable.REPEAT_INFINITE
+        if (visible) d.start()
+    }
+
+    /** Stop the animation if the drawable is animated. Safe for statics. */
+    fun stopIfAnimated(d: Drawable?) {
+        if (d is android.graphics.drawable.AnimatedImageDrawable && d.isRunning) {
+            d.stop()
+        }
+    }
+
+    /** Start / stop in response to visibility changes. */
+    fun setAnimatedVisible(d: Drawable?, visible: Boolean) {
+        if (d !is android.graphics.drawable.AnimatedImageDrawable) return
+        if (visible) {
+            if (!d.isRunning) d.start()
+        } else {
+            if (d.isRunning) d.stop()
+        }
+    }
+
+    /**
+     * Returns `true` when the drawable is animated and should be ticked
+     * again on the next frame. Returns `false` for static drawables so we
+     * don't needlessly spin the frame loop.
+     */
+    fun ensureRunning(d: Drawable): Boolean {
+        if (d !is android.graphics.drawable.AnimatedImageDrawable) return false
+        if (!d.isVisible) d.setVisible(true, false)
+        if (!d.isRunning) d.start()
+        return true
     }
 }
