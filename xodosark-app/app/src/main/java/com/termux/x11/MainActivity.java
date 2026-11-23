@@ -19,6 +19,7 @@ import androidx.preference.PreferenceScreen;
 import androidx.preference.SwitchPreferenceCompat;
 import androidx.preference.ListPreference;
 import androidx.annotation.NonNull;
+import androidx.annotation.RequiresApi;
 import android.content.Context;
 import androidx.appcompat.app.AppCompatActivity;
 import com.termux.x11.controller.winhandler.ProcessInfo;
@@ -156,6 +157,7 @@ import android.widget.ImageButton;
 import android.widget.LinearLayout;
 
 import androidx.annotation.NonNull;
+import androidx.annotation.RequiresApi;
 import androidx.appcompat.app.AppCompatActivity;
 import androidx.core.app.NotificationCompat;
 import androidx.core.math.MathUtils;
@@ -1133,13 +1135,9 @@ if (!sdlEnabled && !isIgnoredDevice(dev) && isGamepadConnected()) {
         });
         lorieParent.setOnHoverListener((v, e) -> mInputHandler.handleTouchEvent(lorieParent, lorieView, e));
         lorieParent.setOnGenericMotionListener((v, e) -> mInputHandler.handleTouchEvent(lorieParent, lorieView, e));
-        lorieView.setOnCapturedPointerListener((v, e) -> {
-    if (drawerLayout != null && drawerLayout.isDrawerOpen(GravityCompat.START)) {
-        return false;
-    }
-    return mInputHandler.handleTouchEvent(lorieView, lorieView, e);
-});
-        lorieParent.setOnCapturedPointerListener((v, e) -> mInputHandler.handleTouchEvent(lorieView, lorieView, e));
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            Api26Helper.setupLorieCapturedPointer(lorieView, lorieParent, mInputHandler, drawerLayout);
+        }
         lorieView.setOnKeyListener(mLorieKeyListener);
 
         lorieView.setCallback((screenWidth, screenHeight, inputTransform) ->
@@ -1379,7 +1377,9 @@ private void setupInputController() {
         overlay.setOnTouchListener((v, e) -> true);
         overlay.setOnHoverListener((v, e) -> true);
         overlay.setOnGenericMotionListener((v, e) -> true);
-        overlay.setOnCapturedPointerListener((v, e) -> true);
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            Api26Helper.setupOverlayCapturedPointer(overlay);
+        }
         overlay.setVisibility(stylusMenuEnabled ? View.VISIBLE : View.GONE);
         View.OnClickListener listener = view -> {
             TouchInputHandler.STYLUS_INPUT_HELPER_MODE = (view.equals(left) ? 1 : (view.equals(middle) ? 2 : (view.equals(right) ? 4 : 0)));
@@ -1898,14 +1898,37 @@ protected boolean isSettingsActivity() {
 
     private String getNotificationChannel(NotificationManager notificationManager){
         String channelId = getResources().getString(R.string.lorie_app_name);
-        String channelName = getResources().getString(R.string.lorie_app_name);
-        NotificationChannel channel = new NotificationChannel(channelId, channelName, NotificationManager.IMPORTANCE_HIGH);
-        channel.setImportance(NotificationManager.IMPORTANCE_HIGH);
-        channel.setLockscreenVisibility(Notification.VISIBILITY_SECRET);
-        if (SDK_INT >= VERSION_CODES.Q)
-            channel.setAllowBubbles(false);
-        notificationManager.createNotificationChannel(channel);
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            String channelName = getResources().getString(R.string.lorie_app_name);
+            Api26Helper.createNotificationChannel(notificationManager, channelId, channelName);
+        }
         return channelId;
+    }
+
+    @RequiresApi(Build.VERSION_CODES.O)
+    private static class Api26Helper {
+        static void setupLorieCapturedPointer(View lorieView, View lorieParent, TouchInputHandler inputHandler, androidx.drawerlayout.widget.DrawerLayout drawerLayout) {
+            lorieView.setOnCapturedPointerListener((v, e) -> {
+                if (drawerLayout != null && drawerLayout.isDrawerOpen(androidx.core.view.GravityCompat.START)) {
+                    return false;
+                }
+                return inputHandler.handleTouchEvent(lorieView, lorieView, e);
+            });
+            lorieParent.setOnCapturedPointerListener((v, e) -> inputHandler.handleTouchEvent(lorieView, lorieView, e));
+        }
+
+        static void setupOverlayCapturedPointer(View overlay) {
+            overlay.setOnCapturedPointerListener((v, e) -> true);
+        }
+
+        static void createNotificationChannel(NotificationManager notificationManager, String channelId, String channelName) {
+            NotificationChannel channel = new NotificationChannel(channelId, channelName, NotificationManager.IMPORTANCE_HIGH);
+            channel.setImportance(NotificationManager.IMPORTANCE_HIGH);
+            channel.setLockscreenVisibility(Notification.VISIBILITY_SECRET);
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q)
+                channel.setAllowBubbles(false);
+            notificationManager.createNotificationChannel(channel);
+        }
     }
 
         int orientation, densityDpi; 

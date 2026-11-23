@@ -510,32 +510,21 @@ fn build_native_args() -> Result<(Vec<CString>, Vec<CString>)> {
     let _ = fs::create_dir_all(&tmp_dir);
     let _ = fs::create_dir_all(&home_dir);
 
-    #[cfg(target_pointer_width = "64")]
-    let linker = "/system/bin/linker64";
-    #[cfg(target_pointer_width = "32")]
-    let linker = "/system/bin/linker";
-
     let bash = format!("{}/bin/bash", prefix_str);
     let sh   = format!("{}/bin/sh", prefix_str);
 
-    // Prefer bash > sh > system fallback. Only bash/sh from the Termux
-    // prefix need the linker trick — /system/bin/sh is invoked directly.
-    let (shell_path, use_linker) = if Path::new(&bash).exists() {
-        (bash, true)
+    // Prefer bash > sh > system fallback.
+    let shell_path = if Path::new(&bash).exists() {
+        bash
     } else if Path::new(&sh).exists() {
-        (sh, true)
+        sh
     } else {
-        ("/system/bin/sh".to_string(), false)
+        "/system/bin/sh".to_string()
     };
 
     let mut argv: Vec<CString> = Vec::new();
-    if use_linker {
-        // Invoking linker explicitly bypasses the kernel's PT_INTERP path,
-        // which is what fails on API 24/25 for Termux-prefix binaries.
-        argv.push(CString::new(linker).unwrap());
-    }
     argv.push(CString::new(shell_path.as_str()).unwrap());
-    // ── THE FIX ── force interactive just like the proot path does.
+    // ── Force login and interactive shell ──
     argv.push(CString::new("-l").unwrap());
     argv.push(CString::new("-i").unwrap());
 

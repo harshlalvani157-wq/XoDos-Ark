@@ -1,6 +1,8 @@
 package com.termux.x11.utils;
 
 import android.annotation.SuppressLint;
+import android.os.Build;
+import androidx.annotation.RequiresApi;
 import android.graphics.Color;
 import android.graphics.drawable.ColorDrawable;
 import android.view.LayoutInflater;
@@ -71,10 +73,9 @@ public class X11ToolbarViewPager {
                     return true;
                 });
 
-                editText.setOnCapturedPointerListener((v2, e2) -> {
-                    MainActivity.setCapturingEnabled(false);
-                    return false;
-                });
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                    Api26Helper.setupEditTextCapturedPointer(editText);
+                }
 
                 back.setOnClickListener(v -> mActivity.getTerminalToolbarViewPager().setCurrentItem(0, true));
                 back.setTextColor(0xFFFFFFFF);
@@ -128,6 +129,16 @@ public class X11ToolbarViewPager {
                 final EditText editText = mTerminalToolbarViewPager.findViewById(R.id.terminal_toolbar_text_input);
                 if (editText != null) editText.requestFocus();
             }
+        }
+    }
+
+    @RequiresApi(Build.VERSION_CODES.O)
+    private static class Api26Helper {
+        static void setupEditTextCapturedPointer(View editText) {
+            editText.setOnCapturedPointerListener((v2, e2) -> {
+                MainActivity.setCapturingEnabled(false);
+                return false;
+            });
         }
     }
 }
