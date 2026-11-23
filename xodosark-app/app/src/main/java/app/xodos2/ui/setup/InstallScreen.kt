@@ -81,7 +81,7 @@ fun InstallScreen(
 
                     // Progress bar
                     LinearProgressIndicator(
-                        progress = { progress / 100f },
+                        progress = (progress.toFloat() / 100f).coerceIn(0f, 1f),
                         modifier = Modifier
                             .fillMaxWidth()
                             .height(8.dp)

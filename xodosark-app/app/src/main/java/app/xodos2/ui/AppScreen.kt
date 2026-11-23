@@ -1603,6 +1603,7 @@ for (id in 1..3) {
         },
     )
 
+    delay(200)
     bootstrapInProgress = false
 
     if (!r.ok) {
@@ -2203,11 +2204,6 @@ fun setDesktopOpenGLMode(mode: String) {
         return
     }
     
-    if (bootstrapInProgress) {
-        InstallScreen(progress = bootstrapProgress.first, message = bootstrapProgress.second)
-        return
-    }
-
     if (bootstrapError != null) {
         AlertDialog(
             onDismissRequest = { bootstrapError = null },
@@ -2234,36 +2230,14 @@ fun setDesktopOpenGLMode(mode: String) {
         )
     }
 
-    if (!initialized) {
-        Box(
-            modifier = Modifier.fillMaxSize().background(Color(0xFF07040E)),
-            contentAlignment = Alignment.Center
-        ) {
-            Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                if (bootstrapInProgress && bootstrapProgress.first in 0..100) {
-                    CircularProgressIndicator(
-                        progress = { bootstrapProgress.first / 100f },
-                        modifier = Modifier.size(48.dp),
-                        color = Color(0xFFC3B6F9)
-                    )
-                } else {
-                    CircularProgressIndicator(
-                        modifier = Modifier.size(48.dp),
-                        color = Color(0xFFC3B6F9)
-                    )
-                }
-                Spacer(modifier = Modifier.height(16.dp))
-                Text(
-                    text = if (bootstrapInProgress && bootstrapProgress.second.isNotBlank()) {
-                        bootstrapProgress.second
-                    } else {
-                        stringResource(R.string.appscreen_preparing)
-                    },
-                    style = MaterialTheme.typography.bodyLarge,
-                    color = Color.White
-                )
-            }
+    if (!initialized || bootstrapInProgress) {
+        val pct = if (bootstrapInProgress && bootstrapProgress.first in 0..100) bootstrapProgress.first else 0
+        val msg = if (bootstrapInProgress && bootstrapProgress.second.isNotBlank()) {
+            bootstrapProgress.second
+        } else {
+            stringResource(R.string.appscreen_preparing)
         }
+        InstallScreen(progress = pct, message = msg)
         return
     }
 
@@ -2673,19 +2647,7 @@ if (fullDesktopDownloadInProgress) {
     )
 }
 
-// ── Restart dialog after installation ───────────────────────────
-if (installDone) {
-    // Full‑screen surface to avoid the default window background
-    Surface(
-        modifier = Modifier.fillMaxSize(),
-        color = Color(0xFF07040E)
-    ) {
-        // The dialog itself – no way to close it except the Restart button
-        
-        
-    }
-    return
-}
+
 
 if (showPanvkDriverDialog) {
     val isDownloading = panvkDownloadInProgress
