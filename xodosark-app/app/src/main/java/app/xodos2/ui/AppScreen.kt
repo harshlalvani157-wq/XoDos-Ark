@@ -1797,97 +1797,39 @@ LaunchedEffect(bootstrapUri) {
     if (bootstrapInProgress) return@LaunchedEffect
 
     bootstrapInProgress = true
-    bootstrapProgress = 0 to context.getString(R.string.appscreen_copying_archive)
+    bootstrapProgress = 0 to context.getString(R.string.appscreen_extracting)
 
     val dataDir = context.filesDir          // /data/data/app.xodos2/files
-    val usrDir = File(dataDir, "usr")       // /data/data/app.xodos2/files/usr
-    val cacheDir = context.cacheDir
-    val tempArchive = File(cacheDir, "bootstrap_${System.currentTimeMillis()}.tar.xz")
+    val xkbDir = File(dataDir, "usr/share/X11/xkb")
 
     try {
-        // 1. Copy selected file to cache
-        withContext(Dispatchers.IO) {
+        if (xkbDir.exists()) {
+            xkbDir.deleteRecursively()
+        }
+
+        val success = withContext(Dispatchers.IO) {
             context.contentResolver.openInputStream(uri)?.use { input ->
-                tempArchive.outputStream().use { output ->
-                    input.copyTo(output)
-                }
-            }
-        }
-
-        // 2. Total uncompressed size for pv (209 MB – adjust if needed)
-        val totalSize = 209L * 1024 * 1024
-
-        // 3. Binary paths
-        val xzBinary  = File(usrDir, "bin/xz").absolutePath
-        val pvBinary  = File(usrDir, "bin/pv").absolutePath
-        val tarBinary = File(usrDir, "bin/tar").absolutePath
-        val libDir    = File(usrDir, "lib").absolutePath
-
-        // Check that all binaries exist
-        for (path in listOf(xzBinary, pvBinary, tarBinary)) {
-            if (!File(path).exists()) throw Exception("Missing binary: $path")
-            File(path).setExecutable(true)
-        }
-
-        val env = mapOf(
-            "PATH"            to "${File(usrDir, "bin").absolutePath}:/system/bin:/sbin:/bin",
-            "LD_LIBRARY_PATH" to "$libDir:/system/lib64:/lib",
-            "TMPDIR"          to cacheDir.absolutePath
-        )
-
-        // Command: xz -dc archive | pv -n -s totalsize | tar -xf - -C dataDir
-        // Remove conflicting directory before extraction
-val shellCmd = "rm -rf ${dataDir.absolutePath}/usr/share/X11/xkb && " +
-               "$xzBinary -dc ${tempArchive.absolutePath} | " +
-               "$pvBinary -n -s $totalSize | " +
-               "$tarBinary -xf - -C ${dataDir.absolutePath}"
-        Log.d("BootstrapExtract", "Running: $shellCmd")
-
-        val cmd = arrayOf("/system/bin/sh", "-c", shellCmd)
-
-        // 4. Run extraction and read progress
-        withContext(Dispatchers.IO) {
-            val process = ProcessBuilder(*cmd)
-                .directory(cacheDir)
-                .apply { environment().putAll(env) }
-                .redirectErrorStream(false)   // pv writes numeric progress to stderr
-                .start()
-
-            // Read stderr (pv progress) and collect error output
-            val stderrLines = mutableListOf<String>()
-            val progressJob = launch {
-                process.errorStream.bufferedReader().use { reader ->
-                    var line = reader.readLine()
-                    while (line != null) {
-                        stderrLines.add(line)
-                        val percent = line.toIntOrNull()
-                        if (percent != null && percent in 0..100) {
-                            withContext(Dispatchers.Main) {
-                                bootstrapProgress = percent to context.getString(R.string.appscreen_extracting_percent, percent)
-                            }
+                app.xodos2.ui.runtime.ArchiveUtils.extractTarXz(
+                    inputStream = input,
+                    destDir = dataDir,
+                    totalEstimatedEntries = 11400,
+                    onProgress = { pct, msg ->
+                        withContext(Dispatchers.Main) {
+                            bootstrapProgress = pct to context.getString(R.string.appscreen_extracting_percent, pct)
                         }
-                        line = reader.readLine()
                     }
-                }
-            }
+                )
+            } ?: false
+        }
 
-            val exitCode = process.waitFor()
-            progressJob.join()   // wait for all progress lines to be processed
-            tempArchive.delete()
-
-            val stderrLog = stderrLines.joinToString("\n")
-            Log.d("BootstrapExtract", "Exit code: $exitCode, stderr:\n$stderrLog")
-
-            withContext(Dispatchers.Main) {
-                if (exitCode == 0) {
-                    bootstrapProgress = 100 to context.getString(R.string.appscreen_installed)
-                    Toast.makeText(context, context.getString(R.string.appscreen_package_installed), Toast.LENGTH_SHORT).show()
-                    installWineDependenciesInNativeSession()
-                } else {
-                    val errMsg = if (stderrLog.isNotEmpty()) stderrLog else "unknown error"
-                    bootstrapError = context.getString(R.string.appscreen_extraction_failed_exit, exitCode, errMsg)
-                    Toast.makeText(context, context.getString(R.string.appscreen_extraction_failed), Toast.LENGTH_LONG).show()
-                }
+        withContext(Dispatchers.Main) {
+            if (success) {
+                bootstrapProgress = 100 to context.getString(R.string.appscreen_installed)
+                Toast.makeText(context, context.getString(R.string.appscreen_package_installed), Toast.LENGTH_SHORT).show()
+                installWineDependenciesInNativeSession()
+            } else {
+                bootstrapError = context.getString(R.string.appscreen_extraction_failed)
+                Toast.makeText(context, context.getString(R.string.appscreen_extraction_failed), Toast.LENGTH_LONG).show()
             }
         }
     } catch (e: Exception) {

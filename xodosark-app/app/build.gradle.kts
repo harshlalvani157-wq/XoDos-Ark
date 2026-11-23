@@ -37,8 +37,8 @@ kotlinOptions {
         buildConfigField("String", "COMMIT", "\"xodos2-embedded-x11\"")
         // versionName: user-visible, align with git tag / Release (e.g. v0.1.0 → "0.1.0").
         // versionCode: positive integer, must increase for every new APK you ship (Play / sideload).
-        versionCode = 67
-        versionName = "1.0.1-android7"
+        versionCode = 68
+        versionName = "1.0.2-android7"
     }
 
     signingConfigs {
@@ -205,12 +205,8 @@ implementation("androidx.compose.material:material-icons-extended:1.5.0") //
     debugImplementation(libs.androidx.ui.tooling)
     implementation(libs.kotlinx.coroutines.android)
     implementation("org.apache.commons:commons-compress:1.26.1")
-implementation("org.tukaani:xz:1.9")
-//implementation("org.apache.commons:commons-compress:1.26.1")
-implementation("org.tukaani:xz:1.9")
+    implementation("org.tukaani:xz:1.9")
 
-implementation("com.google.android.material:material:1.11.0")
-  implementation("androidx.constraintlayout:constraintlayout:2.1.4")
-    
-
+    implementation("com.google.android.material:material:1.11.0")
+    implementation("androidx.constraintlayout:constraintlayout:2.1.4")
 }

@@ -1435,7 +1435,7 @@ private fun refreshNativeBinariesAndAssets(context: Context) {
  */
 private fun symlinksNeedRefresh(context: Context): Boolean {
     val usrBin = File(context.filesDir, "usr/bin")
-    return listOf("busybox", "tar", "xz", "pv", "proot", "gzip", "xodos-host")
+    return listOf("proot", "xodos-host")
         .any { !File(usrBin, it).exists() }
 }
 
@@ -1467,30 +1467,29 @@ private fun symlinksNeedRefresh(context: Context): Boolean {
             }
         }
 
-        // libexec_tar.so requires Android 9+ Bionic symbols (iconv_open@LIBC_P, glob@LIBC_P).
-        // On Android 7-8 (API < 28), fall back to busybox tar which has no versioned libc symbols.
-        val tarTarget = if (Build.VERSION.SDK_INT < 28) "libexec_busybox.so" else "libexec_tar.so"
-        val symlinks = mapOf(
-            "libexec_busybox.so" to "busybox",
-            tarTarget            to "tar",
-            "libproot.so"        to "proot",
-            "libxz.so"           to "xz",
-            "libpv.so"           to "pv",
-            "libgzip.so"         to "gzip",
-            "libxodosh.so"       to context.getString(R.string.appscreen_xodos_host)
+        val symlinks = mutableMapOf(
+            "libproot.so"  to "proot",
+            "libxodosh.so" to context.getString(R.string.appscreen_xodos_host)
         )
+        // Link fallback binaries if bootstrap has not yet provided them in usr/bin
+        if (!File(usrBin, "busybox").exists()) symlinks["libexec_busybox.so"] = "busybox"
+        if (!File(usrBin, "tar").exists()) {
+            val tarTarget = if (Build.VERSION.SDK_INT < 28) "libexec_busybox.so" else "libexec_tar.so"
+            symlinks[tarTarget] = "tar"
+        }
+        if (!File(usrBin, "xz").exists()) symlinks["libxz.so"] = "xz"
+        if (!File(usrBin, "pv").exists()) symlinks["libpv.so"] = "pv"
+        if (!File(usrBin, "gzip").exists()) symlinks["libgzip.so"] = "gzip"
+
         for ((target, linkName) in symlinks) {
             val targetPath = "$nativeLibDir/$target"
-            val linkPath = File(usrBin, linkName).absolutePath
+            val linkFile = File(usrBin, linkName)
+            if (!File(targetPath).exists()) continue
             try {
-                val pb = ProcessBuilder(
-                    "/system/bin/sh", "-c",
-                    "ln -sf $targetPath $linkPath && chmod +x $targetPath"
-                ).redirectErrorStream(true)
-                val p = pb.start()
-                p.waitFor()
+                ArchiveUtils.removeFileOrSymlink(linkFile)
+                android.system.Os.symlink(targetPath, linkFile.absolutePath)
             } catch (e: Exception) {
-                Log.e("NativeInstall", "Failed to create symlink $linkName", e)
+                Log.e("NativeInstall", "Failed to create symlink $linkName -> $targetPath", e)
             }
         }
     }
@@ -1849,82 +1848,33 @@ private fun applyArchPacmanFixes(context: Context, containerId: Int, distroType:
     
     
 /**
- * Extracts assets/bootstrap.tar.xz into filesDir/ using the app's own
- * usr/bin/xz | pv | tar pipeline (same as the old picker flow).
+ * Extracts assets/bootstrap.tar.xz into filesDir/ using pure JVM TarArchiveInputStream
+ * and XZInputStream. Zero dependencies on external binaries, linkers, or shell processes.
  * Returns true on success.
  */
-
- 
 suspend fun extractBootstrapFromAssets(
     context: Context,
     onProgress: suspend (Int, String) -> Unit
 ): Boolean = withContext(Dispatchers.IO) {
-    val dataDir    = context.filesDir
-    val usrDir     = File(dataDir, "usr")
-    val cacheDir   = context.cacheDir
-    val tmpArchive = File(cacheDir, "bootstrap_auto.tar.xz")
+    val dataDir = context.filesDir
+    val xkbDir  = File(dataDir, "usr/share/X11/xkb")
 
     try {
-        context.assets.open("bootstrap.tar.xz").use { input ->
-            tmpArchive.outputStream().use { output -> input.copyTo(output) }
+        if (xkbDir.exists()) {
+            xkbDir.deleteRecursively()
         }
 
-        val xzBinary  = File(usrDir, "bin/xz").absolutePath
-        val pvBinary  = File(usrDir, "bin/pv").absolutePath
-        val tarBinary = File(usrDir, "bin/tar").absolutePath
-        val libDir    = File(usrDir, "lib").absolutePath
-
-        for (p in listOf(xzBinary, pvBinary, tarBinary)) {
-            val f = File(p)
-            if (!f.exists()) throw Exception("Missing binary: $p")
-            f.setExecutable(true, false)
+        val success = context.assets.open("bootstrap.tar.xz").use { input ->
+            ArchiveUtils.extractTarXz(
+                inputStream = input,
+                destDir = dataDir,
+                totalEstimatedEntries = 11400,
+                onProgress = onProgress
+            )
         }
-
-        val env = mapOf(
-            "PATH"            to "${File(usrDir, "bin").absolutePath}:/system/bin:/sbin:/bin",
-            "LD_LIBRARY_PATH" to "$libDir:/system/lib64:/lib",
-            "TMPDIR"          to cacheDir.absolutePath
-        )
-
-        val totalSize = 80L * 1024 * 1024
-
-        val shellCmd = "rm -rf ${dataDir.absolutePath}/usr/share/X11/xkb && " +
-                "$xzBinary -dc ${tmpArchive.absolutePath} | " +
-                "$pvBinary -n -s $totalSize | " +
-                "$tarBinary -xf - -C ${dataDir.absolutePath}"
-
-        val cmd = arrayOf("/system/bin/sh", "-c", shellCmd)
-
-        val process = ProcessBuilder(*cmd)
-            .directory(cacheDir)
-            .apply { environment().putAll(env) }
-            .redirectErrorStream(false)
-            .start()
-
-        val stderrLines = mutableListOf<String>()
-        process.errorStream.bufferedReader().use { reader ->
-            var line = reader.readLine()
-            while (line != null) {
-                stderrLines.add(line)
-                line.toIntOrNull()?.let { pct ->
-                    if (pct in 0..100) onProgress(pct, "Installing bootstrap… $pct%")
-                }
-                line = reader.readLine()
-            }
-        }
-
-        val exit = process.waitFor()
-        tmpArchive.delete()
-
-        if (exit != 0) throw Exception("tar exited $exit: ${stderrLines.joinToString("\n")}")
-
-        File(usrDir, "bin").listFiles()?.forEach { it.setExecutable(true, false) }
-
-        onProgress(100, "Bootstrap installed")
-        true
+        success
     } catch (e: Exception) {
         Log.e("Bootstrap", "Auto-install failed", e)
-        tmpArchive.delete()
         onProgress(-1, "Bootstrap failed: ${e.message}")
         false
     }
