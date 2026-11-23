@@ -62,18 +62,14 @@ class RustPtySession(
         }
 
         if (!spawnAttempted) {
-            spawnAttempted = true
-
             val rootfsKind = TerminalSessionIds.rootfsKindForNativeId(sessionId)
             val spawnOk = NativeBridge.spawnSessionInRootfs(sessionId, rows, columns, rootfsKind)
 
             if (!spawnOk) {
-                Log.e(TAG, "spawnSession failed ($sessionId) for rootfsKind: $rootfsKind")
-                val errorMsg = "\u001b[31mFailed to start session. Check container installation.\u001b[0m\r\n"
-                    .toByteArray(Charsets.UTF_8)
-                emulator?.append(errorMsg, errorMsg.size)
+                Log.w(TAG, "spawnSession not ready yet ($sessionId) for rootfsKind: $rootfsKind — will retry")
                 return
             } else {
+                spawnAttempted = true
                 Log.i(TAG, "spawnSession succeeded ($sessionId)")
             }
 

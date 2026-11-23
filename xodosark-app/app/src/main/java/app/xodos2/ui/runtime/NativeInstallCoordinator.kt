@@ -1446,6 +1446,21 @@ private fun symlinksNeedRefresh(context: Context): Boolean {
         val usrBin = File(context.filesDir, "usr/bin").apply { mkdirs() }
         val usrLib = File(context.filesDir, "usr/lib").apply { mkdirs() }
 
+        // Ensure /data/data/app.xodos2 <-> /data/user/0/app.xodos2 symlink on Android 7 / VMOS
+        try {
+            val dataData = File("/data/data/app.xodos2")
+            val userZero = File("/data/user/0/app.xodos2")
+            if (userZero.exists() && !dataData.exists()) {
+                android.system.Os.symlink(userZero.absolutePath, dataData.absolutePath)
+                Log.i("NativeInstall", "Created symlink /data/data/app.xodos2 -> ${userZero.absolutePath}")
+            } else if (dataData.exists() && !userZero.exists()) {
+                android.system.Os.symlink(dataData.absolutePath, userZero.absolutePath)
+                Log.i("NativeInstall", "Created symlink /data/user/0/app.xodos2 -> ${dataData.absolutePath}")
+            }
+        } catch (e: Throwable) {
+            Log.w("NativeInstall", "Symlink /data/data <-> /data/user/0 notice: ${e.message}")
+        }
+
         val libFiles = mapOf(
             "libbusybox.so" to context.getString(R.string.appscreen_libbusybox_so_1_37_0),
             "liblzma.so" to context.getString(R.string.appscreen_liblzma_so_5),
@@ -1465,6 +1480,46 @@ private fun symlinksNeedRefresh(context: Context): Boolean {
                     Log.e("NativeInstall", "Failed to copy $src -> $dst", e)
                 }
             }
+        }
+
+        // Verify and repair critical library symlinks in usr/lib (e.g. libreadline.so.8 -> libreadline.so.8.3)
+        val criticalLibSymlinks = mapOf(
+            "libreadline.so.8" to "libreadline.so.8.3",
+            "libreadline.so"   to "libreadline.so.8",
+            "libhistory.so.8"  to "libhistory.so.8.3",
+            "libhistory.so"    to "libhistory.so.8",
+            "libncursesw.so.6" to "libncursesw.so.6.5",
+            "libncursesw.so"   to "libncursesw.so.6",
+            "libncurses.so.6"  to "libncursesw.so.6.5",
+            "libncurses.so"    to "libncursesw.so.6.5",
+            "libtinfo.so.6"    to "libncursesw.so.6.5",
+            "libtinfo.so"      to "libncursesw.so.6.5",
+            "libtermcap.so"    to "libncursesw.so.6.5",
+            "libz.so.1"        to "libz.so.1.3.2",
+            "libbz2.so.1.0"    to "libbz2.so.1.0.8",
+            "liblzma.so.5"     to "liblzma.so.5.8.4",
+            "libzstd.so.1"     to "libzstd.so.1.5.7",
+            "libsqlite3.so.0"  to "libsqlite3.so.3.54.0",
+            "libcrypto.so"     to "libcrypto.so.3",
+            "libssl.so"        to "libssl.so.3"
+        )
+        for ((linkName, realTarget) in criticalLibSymlinks) {
+            val linkFile = File(usrLib, linkName)
+            val targetFile = File(usrLib, realTarget)
+            if (!linkFile.exists() && targetFile.exists()) {
+                try {
+                    ArchiveUtils.removeFileOrSymlink(linkFile)
+                    android.system.Os.symlink(realTarget, linkFile.absolutePath)
+                } catch (_: Exception) {
+                    try {
+                        targetFile.copyTo(linkFile, overwrite = true)
+                    } catch (_: Exception) {}
+                }
+            }
+        }
+
+        usrLib.listFiles()?.forEach {
+            it.setReadable(true, false)
         }
 
         val symlinks = mutableMapOf(

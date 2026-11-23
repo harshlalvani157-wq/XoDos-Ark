@@ -49,8 +49,13 @@ object ArchiveUtils {
                             val targetFile = File(destDir, entryName)
 
                             // Security: guard against directory traversal (Zip Slip / Tar Slip)
+                            if (entryName.contains("..") || entryName.startsWith("/")) {
+                                Log.w(TAG, "Skipping unsafe archive path: $entryName")
+                                entry = tarIn.nextTarEntry
+                                continue
+                            }
                             val targetCanonical = targetFile.canonicalPath
-                            if (!targetCanonical.startsWith(destCanonical)) {
+                            if (!targetCanonical.startsWith(destCanonical) && !targetFile.absolutePath.startsWith(destDir.absolutePath)) {
                                 Log.w(TAG, "Skipping out-of-bounds archive path: $entryName")
                                 entry = tarIn.nextTarEntry
                                 continue
@@ -65,6 +70,14 @@ object ArchiveUtils {
                                     Os.symlink(entry.linkName, targetFile.absolutePath)
                                 } catch (e: Exception) {
                                     Log.w(TAG, "Symlink failed: $entryName -> ${entry.linkName}: ${e.message}")
+                                    val linkTarget = if (File(entry.linkName).isAbsolute) {
+                                        File(entry.linkName)
+                                    } else {
+                                        File(targetFile.parentFile, entry.linkName)
+                                    }
+                                    if (linkTarget.exists()) {
+                                        try { linkTarget.copyTo(targetFile, overwrite = true) } catch (_: Exception) {}
+                                    }
                                 }
                             } else if (entry.isLink) {
                                 // Hard link
@@ -115,10 +128,19 @@ object ArchiveUtils {
                 }
             }
 
-            // Post-extraction: ensure all binaries in usr/bin have execute bits
+            // Post-extraction: ensure all binaries in usr/bin have execute bits and libraries are readable
             val usrBin = File(destDir, "usr/bin")
             if (usrBin.isDirectory) {
-                usrBin.listFiles()?.forEach { it.setExecutable(true, false) }
+                usrBin.listFiles()?.forEach {
+                    it.setExecutable(true, false)
+                    it.setReadable(true, false)
+                }
+            }
+            val usrLib = File(destDir, "usr/lib")
+            if (usrLib.isDirectory) {
+                usrLib.listFiles()?.forEach {
+                    it.setReadable(true, false)
+                }
             }
 
             onProgress(100, "Bootstrap installed")

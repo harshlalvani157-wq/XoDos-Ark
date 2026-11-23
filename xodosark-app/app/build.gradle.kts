@@ -37,8 +37,8 @@ kotlinOptions {
         buildConfigField("String", "COMMIT", "\"xodos2-embedded-x11\"")
         // versionName: user-visible, align with git tag / Release (e.g. v0.1.0 → "0.1.0").
         // versionCode: positive integer, must increase for every new APK you ship (Play / sideload).
-        versionCode = 74
-        versionName = "1.0.8-android7"
+        versionCode = 75
+        versionName = "1.0.9-android7"
     }
 
     signingConfigs {

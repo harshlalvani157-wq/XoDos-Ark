@@ -1267,11 +1267,15 @@ if (!sdlEnabled && !isIgnoredDevice(dev) && isGamepadConnected()) {
         
         //=====================
         
-        registerReceiver(receiver, new IntentFilter(ACTION_START) {{
-            addAction(ACTION_PREFERENCES_CHANGED);
-            addAction(ACTION_STOP);
-            addAction(ACTION_CUSTOM);
-        }}, SDK_INT >= VERSION_CODES.TIRAMISU ? RECEIVER_EXPORTED : 0);
+        IntentFilter x11ActionFilter = new IntentFilter(ACTION_START);
+        x11ActionFilter.addAction(ACTION_PREFERENCES_CHANGED);
+        x11ActionFilter.addAction(ACTION_STOP);
+        x11ActionFilter.addAction(ACTION_CUSTOM);
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            registerReceiver(receiver, x11ActionFilter, RECEIVER_EXPORTED);
+        } else {
+            registerReceiver(receiver, x11ActionFilter);
+        }
 
         inputMethodManager = (InputMethodManager) getSystemService(Context.INPUT_METHOD_SERVICE);
 
